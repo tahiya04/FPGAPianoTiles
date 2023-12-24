@@ -1,0 +1,192 @@
+
+
+
+module RhythmRush(	
+			CLOCK_50,						//	On Board 50 MHz
+			SW, 								// On Board Switches
+			KEY,							   // On Board Keys
+			VGA_CLK,   						//	VGA Clock
+			VGA_HS,							//	VGA H_SYNC
+			VGA_VS,							//	VGA V_SYNC
+			VGA_BLANK_N,					//	VGA BLANK
+			VGA_SYNC_N,						//	VGA SYNC
+			VGA_R,   						//	VGA Red[9:0]
+			VGA_G,	 						//	VGA Green[9:0]
+			VGA_B   						   //	VGA Blue[9:0]
+		);
+		
+		
+	input		    CLOCK_50;			//	50 MHz
+	input	 [3:0] KEY;					// Keys
+	input  [9:0] SW;					// Switches
+	output		 VGA_CLK;   		//	VGA Clock
+	output		 VGA_HS;				//	VGA H_SYNC
+	output		 VGA_VS;				//	VGA V_SYNC
+	output		 VGA_BLANK_N;		//	VGA BLANK
+	output		 VGA_SYNC_N;		//	VGA SYNC
+	output [7:0] VGA_R;   			//	VGA Red[7:0] Changed from 10 to 8-bit DAC
+	output [7:0] VGA_G;	 			//	VGA Green[7:0]
+	output [7:0] VGA_B;   			//	VGA Blue[7:0]
+	
+	wire resetn;
+	assign resetn = KEY[0];
+	
+	// Create the colour, x, y and writeEn wires that are inputs to the controller.
+	wire [2:0] colour;
+	wire [7:0] x;
+	wire [6:0] y;
+	
+	
+	/// ABOVE STUFF IS ALL VGA STUFF
+	
+	wire draw, erase, DrawEnable, update, reset;
+	assign resetn = KEY[0];
+	
+	wire[5:0]frameCounter; 
+	wire [7:0] xCounter;
+	wire [7:0] yCounter;
+	wire[25:0] freq; // essentially the rate divider
+	
+	// VGA ADAPTER
+	vga_adapter VGA(
+			.resetn(resetn),
+			.clock(CLOCK_50),
+			.colour(colour),
+			.x(x),
+			.y(y),
+			.plot(draw),
+			.VGA_R(VGA_R),
+			.VGA_G(VGA_G),
+			.VGA_B(VGA_B),
+			.VGA_HS(VGA_HS),
+			.VGA_VS(VGA_VS),
+			.VGA_BLANK(VGA_BLANK_N),
+			.VGA_SYNC(VGA_SYNC_N),
+			.VGA_CLK(VGA_CLK));
+		defparam VGA.RESOLUTION = "160x120";
+		defparam VGA.MONOCHROME = "FALSE";
+		defparam VGA.BITS_PER_COLOUR_CHANNEL = 1;
+		defparam VGA.BACKGROUND_IMAGE = "red.mif";
+		
+		// instantiate control
+		// instantiate datapath
+		
+		
+		
+endmodule 
+
+
+module drawControl(
+	input Clock,
+	input Resetn,
+	input [5:0] frameCounter,
+	input [7:0] xCount,
+	input [6:0] yCount,
+	input [25:0] freq,
+	output reg draw,
+	output reg erase,
+	output reg update,
+	output reg drawEnable, 
+	output reg reset
+	
+)
+
+	reg [3:0] current_state, next_state;
+	
+	
+	// States for the drawing
+	localparam RESET  = 3'd0,
+				  DRAW   = 3'd1,
+				  DELAY   = 3'd2
+				  ERASE  = 3'd3,
+				  UPDATE = 3'd4;
+				  CLEAR  = 3'd5;
+				  
+	// making state table
+	always @(*)
+	begin
+		case(current_state)
+			RESET: next_state = DRAW;
+			
+			DRAW: 
+				if (frameCounter <= 6'd15)
+					next_state = DRAW;
+				else
+					next_state = WAIT;
+				
+			DELAY:
+				if (freq < 26'd12499999)
+				// replace with rate divider maybe
+					next_state = WAIT;
+				else
+					next_state = ERASE;
+				
+			
+			ERASE:
+				if (frameCounter <= 6'd15) 
+					next_state = ERASE;
+				else 
+					next_state = UPDATE;
+			
+			UPDATE: next_state = DRAW;
+			
+			CLEAR: next_state = (xCount == 8'd160 & yCount == 7'd120) ? RESET : CLEAR;
+			// check this state
+			
+			default: next_state = RESET;
+			
+		endcase
+	end
+		
+
+	// What does each state do
+	
+	always @(*)
+	begin
+		// initializing all output regs to 0
+		
+		draw = 1'b0;
+		update = 1'b0;
+		reset = 1'b0;
+		erase = 1'b0;
+		drawEnable = 1'b0;
+		
+		case(current_state)
+			RESET: reset = 1'b1;
+			
+			DRAW: 
+				draw = 1'b1;
+				erase = 1'b0;
+				drawEnable = 1'b1;
+			
+			ERASE:
+				draw = 1'b1; // want to draw black
+				erase = 1'b1;
+				drawEnable = 1'b1;
+			
+			UPDATE:
+				update = 1'b1;
+				// update prev positions to current
+			
+			CLEAR:
+				erase = 1'b1;
+				draw = 1'b1;
+		
+		
+		endcase
+	
+	end
+	
+	
+	// making sure we go to the next state
+	
+	always @(posedge Clock)
+	begin
+		if (!Resetn)
+			current_state <= CLEAR;
+		else
+			current_State <= next_state;
+	
+	end
+
+endmodule
